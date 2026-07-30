@@ -1,0 +1,144 @@
+/* Grant Intelligence marketing page — layout on top of the Industry tokens
+   (assets/industry.css). Never hard-codes a color/font/space the tokens
+   already carry; only page structure lives here. */
+
+body { overflow-x: hidden; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 var(--space-4); }
+.section { padding: var(--space-8) 0; }
+.section-alt { background: var(--color-surface); }
+.kicker { letter-spacing: 0.12em; margin-bottom: var(--space-2); }
+.lede { max-width: 62ch; font-size: 17px; opacity: 0.85; }
+.row { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; }
+
+.nav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--color-bg) 92%, transparent); backdrop-filter: blur(6px); }
+.nav-brand { display: inline-flex; align-items: center; gap: 9px; }
+.nav-mark { width: 20px; height: 20px; color: var(--color-accent-800); flex: none; }
+
+/* A faint drafting-table grid, the "keep the grid visible" instruction made
+   literal. Extremely low contrast on purpose — texture, not decoration. */
+.grid-texture {
+  background-image:
+    repeating-linear-gradient(to right, color-mix(in srgb, var(--color-text) 5%, transparent) 0 1px, transparent 1px 68px),
+    repeating-linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 5%, transparent) 0 1px, transparent 1px 68px);
+}
+
+/* — hero — */
+.hero { padding: calc(var(--space-8) * 1.4) 0 var(--space-6); position: relative; }
+.hero-wrap { display: grid; grid-template-columns: 1.1fr 0.9fr; column-gap: var(--space-8); align-items: center; }
+.hero-copy { grid-column: 1; }
+.hero h1 { max-width: 17ch; font-size: 52px; letter-spacing: -0.02em; }
+.hero-instrument { grid-column: 2; grid-row: 1 / span 2; margin: 0; justify-self: center; width: min(100%, 380px); }
+.hero-instrument figcaption { text-align: center; font-size: 11px; margin-top: var(--space-2); }
+@media (max-width: 860px) {
+  .hero-wrap { grid-template-columns: 1fr; }
+  .hero-instrument { grid-column: 1; grid-row: auto; margin: var(--space-6) 0; width: min(100%, 320px); }
+  .hero h1 { max-width: none; font-size: 38px; }
+}
+
+/* the NECAI-F instrument SVG */
+.hero-instrument svg { display: block; width: 100%; height: auto; }
+.instrument-rings circle { fill: none; stroke: var(--color-divider); stroke-dasharray: 2 5; }
+.instrument-spokes line { stroke: var(--color-divider); }
+.instrument-reading {
+  fill: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  stroke: var(--color-accent-700); stroke-width: 1.5; stroke-linejoin: round;
+}
+.instrument-nodes circle { fill: var(--color-accent-800); }
+.instrument-crosshair line { stroke: var(--color-accent-800); stroke-width: 1.5; }
+.instrument-labels text {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 10px; letter-spacing: 0.08em; fill: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.instrument-sweep {
+  fill: none; stroke: var(--color-accent); stroke-width: 1;
+  stroke-dasharray: 1 235.6; stroke-dashoffset: 0;
+  transform-origin: 200px 200px;
+  animation: sweep 5s linear infinite;
+}
+@keyframes sweep { to { transform: rotate(360deg); } }
+.motion-restrained .instrument-sweep { animation: none; opacity: 0; }
+[data-tilt] { transition: transform .25s ease; }
+
+/* — spec-sheet plate (the hero stats, drawn as one nameplate, not three
+   identical cards — "its own grammar, not a field") — */
+.plate {
+  grid-column: 1 / -1; margin-top: var(--space-8);
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--color-divider);
+}
+.plate-cell {
+  padding: var(--space-4); display: flex; flex-direction: column; gap: 4px;
+  border-left: 1px solid var(--color-divider);
+}
+.plate-cell:first-child { border-left: none; }
+.plate-num { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 36px; color: var(--color-accent-700); line-height: 1; }
+.plate-label { font-size: 12.5px; opacity: 0.8; max-width: 26ch; }
+@media (max-width: 700px) {
+  .plate { grid-template-columns: 1fr; }
+  .plate-cell { border-left: none; border-top: 1px solid var(--color-divider); }
+  .plate-cell:first-child { border-top: none; }
+}
+
+/* — the steel band: a short, loud one-liner, the design system's own
+   documented exception ("the accent's own deep step may carry a full field
+   ... steel as ground, type reversed to paper") — */
+.steel-band { background: var(--color-accent-900); padding: var(--space-6) 0; }
+.steel-line {
+  margin: 0; text-align: center; color: var(--color-bg);
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 22px; line-height: 1.4;
+}
+.steel-line strong { color: var(--color-accent-200); }
+
+/* — grids — */
+.grid { display: grid; gap: var(--space-4); margin-top: var(--space-6); }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .grid-4 { grid-template-columns: 1fr; } }
+
+.card-icon { width: 26px; height: 26px; color: var(--color-accent-700); margin-bottom: 2px; }
+.card.blueprint { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.card.blueprint:hover { transform: translateY(-3px); border-color: var(--color-accent); box-shadow: var(--shadow-md); }
+
+/* — cascade reveal (data-cascade / data-cascade-item) — */
+[data-cascade-item] { opacity: 0; transform: translateY(12px); transition: opacity .5s ease, transform .5s ease; }
+[data-cascade-item].is-visible { opacity: 1; transform: none; }
+.motion-restrained [data-cascade-item] { transition: none; opacity: 1; transform: none; }
+
+/* — the NECAI-F/990 trace — */
+.trace { margin-top: var(--space-6); }
+.trace-lanes { margin-bottom: var(--space-4); }
+.trace-stage-list { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.trace-chip {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 13px;
+  padding: var(--space-2) var(--space-3); border: 1px solid var(--color-divider);
+  background: transparent; color: var(--color-text); cursor: pointer;
+}
+.trace-chip-n { font-size: 11px; color: var(--color-accent-700); }
+.trace-chip[aria-current="true"] { border-color: var(--color-accent); background: var(--color-accent-100); }
+.trace-progress { height: 2px; background: var(--color-divider); margin-top: var(--space-2); position: relative; }
+.trace-progress > i { position: absolute; inset: 0 auto 0 0; width: 25%; background: var(--color-accent); transition: width .4s ease; display: block; }
+.motion-restrained .trace-progress > i { transition: none; }
+
+.trace-panel { position: relative; padding: var(--space-6); min-height: 220px; }
+.trace-table td:last-child { text-align: right; font-weight: 600; }
+.necaif-list { margin: 0; padding-left: 1.2em; }
+.necaif-list li { margin-bottom: var(--space-2); }
+.trace-caption { margin-top: var(--space-3); font-size: 12px; }
+
+/* — disclosure — */
+.disclosure-card { max-width: 640px; position: relative; }
+.disclosure-card .dialog-body p { margin-bottom: var(--space-2); }
+
+/* — closing — full steel field, type reversed to paper — */
+.closing { text-align: center; padding: calc(var(--space-8) * 1.3) 0; }
+.steel-field { background: var(--color-accent-900); color: var(--color-bg); }
+.pull-quote {
+  font-family: var(--font-heading); font-weight: 400; font-style: italic;
+  font-size: 27px; line-height: 1.35; max-width: 46ch; margin: 0 auto var(--space-6);
+  color: var(--color-bg);
+}
+.steel-field .btn-primary { background: var(--color-bg); color: var(--color-accent-900); border-color: var(--color-bg); }
+.steel-field .btn-primary:hover { background: var(--color-accent-200); }
+.foot-note { margin-top: var(--space-4); font-size: 12px; opacity: 0.7; }
