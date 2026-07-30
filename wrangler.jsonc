@@ -1,0 +1,13 @@
+{
+  // GrantIntelligence static Worker — serves public/ (the marketing page now;
+  // the authenticated app UI lands alongside it later). No Worker script yet:
+  // assets-only until an API surface needs to live on this origin, then add
+  // a `main` entry without moving the site.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "grant-intelligence",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "single-page-application"
+  }
+}
