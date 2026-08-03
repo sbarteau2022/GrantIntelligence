@@ -10,6 +10,21 @@ serving `public/` — the marketing page now, the authenticated app UI later.
 - **Backend**: the engine itself (fit analysis, NECAI-F evaluations, 990
   overviews) lives in elle-worker (`/api/elle-grants`), not here.
 
+## Layout
+
+```
+public/
+  index.html         marketing page markup
+  assets/
+    industry.css      design-system tokens (source of truth for the look)
+    site.css          page layout on top of the tokens
+    app.js            vanilla JS: NECAI-F/990 trace, cascade reveal, hero tilt
+wrangler.jsonc         assets-only Worker config (serves public/)
+package.json           npm scripts (dev, deploy) + wrangler devDependency
+```
+
+## Getting started
+
 ```bash
 npm install
 npm run dev      # local preview
