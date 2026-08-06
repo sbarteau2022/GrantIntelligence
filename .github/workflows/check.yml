@@ -1,0 +1,31 @@
+name: Check
+
+# PR-triggered CI for workers/grant-worker — the marketing site (public/) has
+# no build step to check; this gates the worker's typecheck + tests.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  grant-worker:
+    runs-on: ubuntu-latest
+    name: grant-worker · typecheck + test
+    defaults:
+      run:
+        working-directory: workers/grant-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: workers/grant-worker/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test

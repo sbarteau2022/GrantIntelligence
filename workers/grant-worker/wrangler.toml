@@ -1,0 +1,43 @@
+# IMPORTANT: always deploy/dev with `--config wrangler.toml` explicitly (the
+# npm scripts below already do). Confirmed the hard way: without it, wrangler
+# 4's config auto-discovery walks up to the repo-root wrangler.jsonc (the
+# static marketing site's assets-only config) instead of using this file —
+# dry-run silently reports "No bindings found" and a near-empty bundle, no
+# error at all. Same class of bug as RAPIDAi's rapid2ai-ingestion/
+# rapid2ai-ai-worker name collision (see that repo's PR #97) — a multi-
+# worker repo's wrangler config resolution is a real, recurring footgun.
+name = "grant-intelligence-worker"
+main = "src/grant-worker-index.ts"
+# Pin the account so `wrangler deploy` skips the /memberships account-resolution
+# call (needs the token's "User Details: Read" permission). Account IDs are not
+# secret — same account as elle-worker/RAPIDAi (see their wrangler configs).
+account_id = "f60c2e6068e002f5dbad7cd562a5c165"
+compatibility_date = "2026-06-02"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "grant-intelligence-db"
+database_id = "5c9cbfec-ec99-4d88-a61b-7663801944d2"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "grant-intelligence-visuals"
+
+[ai]
+binding = "AI"
+
+# One cron trigger for both passes (live ingest + capture enrichment) —
+# scheduled() runs them independently so one failing never blocks the
+# other. Daily is plenty for both: opportunity data doesn't change by the
+# minute, and captures only need to drain before they go stale.
+[triggers]
+crons = ["0 6 * * *"]
+
+# SERVICE_KEY: set with `wrangler secret put SERVICE_KEY` to require a
+# bearer token on every /internal/* route once real callers exist. Left
+# unset for now (open) — see isAuthorized()'s comment in
+# grant-worker-index.ts. /health is always open regardless.
