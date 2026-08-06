@@ -3,6 +3,12 @@
   // the authenticated app UI lands alongside it later). No Worker script yet:
   // assets-only until an API surface needs to live on this origin, then add
   // a `main` entry without moving the site.
+  //
+  // The grant DATA layer (ingestion/verification/multimodal — the "grant
+  // worker") lives in workers/grant-worker/ with its OWN wrangler.toml —
+  // always deploy that one with `--config wrangler.toml` explicitly, or
+  // wrangler's auto-discovery silently picks up THIS file instead (assets-
+  // only, no bindings) and reports success on an empty deploy.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "grantintelligence",
   "compatibility_date": "2026-07-01",
