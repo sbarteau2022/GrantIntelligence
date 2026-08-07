@@ -6,7 +6,7 @@
 # error at all. Same class of bug as RAPIDAi's rapid2ai-ingestion/
 # rapid2ai-ai-worker name collision (see that repo's PR #97) — a multi-
 # worker repo's wrangler config resolution is a real, recurring footgun.
-name = "grant-intelligence-worker"
+name = "grant-worker"
 main = "src/grant-worker-index.ts"
 # Pin the account so `wrangler deploy` skips the /memberships account-resolution
 # call (needs the token's "User Details: Read" permission). Account IDs are not
