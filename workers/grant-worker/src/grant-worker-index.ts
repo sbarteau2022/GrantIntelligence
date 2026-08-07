@@ -17,6 +17,7 @@
 import { runGrantIngest, seedOpportunities, type GrantWorkerEnv } from './grant-ingest';
 import { run990OverviewForAllFunders } from './grant-990';
 import { enrichDueCaptures, stageVisualCapture, type MultimodalEnv } from './multimodal-intake';
+import { ingestAtlasObservations } from './grant-observation';
 
 export interface Env extends GrantWorkerEnv, MultimodalEnv {
   SERVICE_KEY?: string;
@@ -76,6 +77,16 @@ export default {
       }
       if (request.method === 'POST' && url.pathname === '/internal/enrich-captures') {
         return json(await enrichDueCaptures(env));
+      }
+      // This worker's own atlas plugin (apps/grant-capture in this repo)
+      // posts here — the browser-capture counterpart to grant-ingest.ts's
+      // Grants.gov/SBIR.gov pull. Body: { observations: RawGrantObservation[] }.
+      // Returns each valid observation's stable id so the extension can pair
+      // a screenshot to it via /internal/visual-capture?opportunity_id=<id>.
+      if (request.method === 'POST' && url.pathname === '/internal/atlas-observation') {
+        const body = await request.json().catch(() => null) as { observations?: unknown } | null;
+        if (!body) return json({ error: 'invalid JSON body' }, 400);
+        return json(await ingestAtlasObservations(env, body.observations), 201);
       }
       // A screenshot captured alongside a DOM scrape (e.g. RAPIDAi's
       // atlas-capture grants plugin) — stages immediately, enriched later by

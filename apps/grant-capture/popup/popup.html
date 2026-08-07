@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Grant Capture</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div class="wordmark">Grant Capture</div>
+      <div class="sub">Grant Intelligence Suite · grant-worker</div>
+    </header>
+
+    <main>
+      <label class="checkbox">
+        <input type="checkbox" id="with-screenshot" checked />
+        Also capture a screenshot for a vision cross-check
+      </label>
+
+      <button id="capture" class="primary">Capture from this page</button>
+      <p class="hint">
+        Runs only when you click, on the page you're viewing. It reads
+        whatever opportunity listing is already on screen — no login, no
+        automation, nothing in the background.
+      </p>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+
+      <details id="settings-wrap">
+        <summary>Settings</summary>
+        <label>
+          grant-worker URL
+          <input id="endpoint" type="url" placeholder="https://grant-intelligence-worker.…workers.dev" />
+        </label>
+        <label>
+          Operator token
+          <input id="token" type="password" placeholder="per-operator token" autocomplete="off" />
+        </label>
+        <button id="save" class="secondary">Save settings</button>
+      </details>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
