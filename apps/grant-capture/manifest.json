@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Grant Capture — GrantIntelligence",
+  "version": "0.1.0",
+  "description": "Operator-initiated capture of small-funder grant opportunities into the Grant Intelligence Suite's grant-worker — DOM read plus an optional screenshot for a second, independent vision cross-check. You click Capture on a page you're viewing — nothing runs on its own.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "action": {
+    "default_title": "Grant Capture",
+    "default_popup": "popup/popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
