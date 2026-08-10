@@ -67,10 +67,10 @@ like the RAPIDAi gates this pattern comes from.
 1. Chrome → Extensions → enable Developer mode → **Load unpacked** →
    select `apps/grant-capture`.
 2. Click the toolbar icon → **Settings**:
-   - **grant-worker URL** — the deployed grant-worker's base URL
-     (`https://grant-intelligence-worker.…workers.dev`).
-   - **Operator token** — matches the grant-worker's `SERVICE_KEY` secret
-     (`wrangler secret put SERVICE_KEY` in `workers/grant-worker`). Treat it
+   - **grant-worker URL** — the deployed Worker's base URL
+     (`https://grantintelligence.…workers.dev`).
+   - **Operator token** — matches the Worker's `SERVICE_KEY` secret
+     (`wrangler secret put SERVICE_KEY`, run from the repo root). Treat it
      as extractable — anything shipped in an extension is.
 3. Open a funder/foundation portal page and click **Capture from this
    page**. Leave "Also capture a screenshot" checked for the vision
@@ -92,6 +92,6 @@ scan that works as a best-effort fallback). See
 | `popup/*` | the only place capture is initiated; settings live here |
 | `background.js` | authenticated delivery of the DOM batch AND the optional screenshot, routed to the grant-worker; survives popup close |
 
-Server side: `workers/grant-worker/src/grant-observation.ts` (the gate +
-upsert into `grant_opportunities`), `workers/grant-worker/src/multimodal-intake.ts`
-(the vision cross-check the screenshot feeds).
+Server side: `src/grant-observation.ts` (the gate + upsert into
+`grant_opportunities`), `src/multimodal-intake.ts` (the vision cross-check
+the screenshot feeds).

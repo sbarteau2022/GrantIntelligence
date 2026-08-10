@@ -1,7 +1,8 @@
 name: Check
 
-# PR-triggered CI for workers/grant-worker — the marketing site (public/) has
-# no build step to check; this gates the worker's typecheck + tests.
+# PR-triggered CI for the grant-intelligence Worker (src/) — typecheck + test.
+# The marketing site (public/) has no build step to check. Deploys happen via
+# Cloudflare's native Workers Builds git integration, not this workflow.
 on:
   pull_request:
   push:
@@ -16,16 +17,13 @@ jobs:
   grant-worker:
     runs-on: ubuntu-latest
     name: grant-worker · typecheck + test
-    defaults:
-      run:
-        working-directory: workers/grant-worker
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: workers/grant-worker/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test

@@ -1,19 +1,57 @@
 {
-  // GrantIntelligence static Worker — serves public/ (the marketing page now;
-  // the authenticated app UI lands alongside it later). No Worker script yet:
-  // assets-only until an API surface needs to live on this origin, then add
-  // a `main` entry without moving the site.
+  // GrantIntelligence — a single Worker: serves public/ (the marketing page
+  // now; the authenticated app UI lands alongside it later) AND owns the
+  // grant data layer (ingestion/verification/multimodal — formerly a
+  // separate "grant-worker" Worker, folded in here to remove the two-
+  // wrangler-config split that kept breaking CI/deploy).
   //
-  // The grant DATA layer (ingestion/verification/multimodal — the "grant
-  // worker") lives in workers/grant-worker/ with its OWN wrangler.toml —
-  // always deploy that one with `--config wrangler.toml` explicitly, or
-  // wrangler's auto-discovery silently picks up THIS file instead (assets-
-  // only, no bindings) and reports success on an empty deploy.
+  // /health and /internal/* are service-key-gated worker routes (see
+  // isAuthorized() in src/grant-worker-index.ts) — run_worker_first routes
+  // them to the Worker script before the SPA fallback would otherwise
+  // swallow them as "not found -> serve index.html".
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "grantintelligence",
+  "main": "./src/grant-worker-index.ts",
   "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Pin the account so `wrangler deploy` skips the /memberships account-resolution
+  // call (needs the token's "User Details: Read" permission). Account IDs are not
+  // secret — same account as elle-worker/RAPIDAi (see their wrangler configs).
+  "account_id": "f60c2e6068e002f5dbad7cd562a5c165",
   "assets": {
     "directory": "./public",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/health", "/internal/*"]
+  },
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "grant-intelligence-db",
+      "database_id": "5c9cbfec-ec99-4d88-a61b-7663801944d2"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "grant-intelligence-visuals"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  // One cron trigger for both passes (live ingest + capture enrichment) —
+  // scheduled() runs them independently so one failing never blocks the
+  // other. Daily is plenty for both: opportunity data doesn't change by the
+  // minute, and captures only need to drain before they go stale.
+  "triggers": {
+    "crons": ["0 6 * * *"]
   }
+
+  // SERVICE_KEY: set with `wrangler secret put SERVICE_KEY` to require a
+  // bearer token on every /internal/* route once real callers exist. Left
+  // unset for now (open) — see isAuthorized()'s comment in
+  // src/grant-worker-index.ts. /health is always open regardless.
 }
