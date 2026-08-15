@@ -1,0 +1,24 @@
+name: Run Grant Ingest
+
+# Manual trigger for the live Grants.gov/SBIR.gov pull (POST /internal/run-ingest
+# on the deployed Worker). The same pull also runs daily via the Worker's own
+# cron trigger — this exists for on-demand runs and to see the result inline
+# in the Actions log. Runs from GitHub's runners deliberately: local dev/CI
+# sandboxes in this account have historically had api.grants.gov/api.www.sbir.gov
+# blocked at the network-policy level, but the deployed Worker itself has
+# unrestricted egress (see the comment atop src/grant-ingest.ts), and GitHub's
+# hosted runners aren't behind that same restriction either.
+on:
+  workflow_dispatch:
+
+jobs:
+  run-ingest:
+    runs-on: ubuntu-latest
+    name: POST /internal/run-ingest
+    steps:
+      - name: Trigger live ingest
+        run: |
+          curl -sS -X POST "https://grantintelligence.sbarteau2022.workers.dev/internal/run-ingest" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP %{http_code}\n" \
+            --fail-with-body
