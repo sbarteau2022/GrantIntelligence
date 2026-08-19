@@ -65,10 +65,10 @@ nothing matches, since the marketing page is currently a single-page app).
 
 ## Endpoints
 
-`/api/*` is public and read-only. All `/internal/*` routes are gated by
-`SERVICE_KEY` (a bearer token) once that secret is set — dormant/open until
-then, which `docs/AUDIT.md` finding 1 argues should change now that the
-Worker serves a page meant to be found.
+`/api/*` is public and read-only. All `/internal/*` routes require
+`SERVICE_KEY` (a bearer token) and **fail closed**: with the secret unset
+they return `503`, not open access. See "Arming SERVICE_KEY" below — this
+is the one setup step the Worker will not do for you.
 
 - `GET /health` — always open.
 - `GET /api/tiers` — the tier specs and the form vocabulary (entity types,
@@ -87,6 +87,40 @@ Worker serves a page meant to be found.
 - `POST /internal/atlas-observation` — apps/grant-capture's DOM-scrape batch.
 - `POST /internal/visual-capture?opportunity_id=<id>` — stage a screenshot
   (raw image bytes as the body) for later enrichment.
+
+## Arming SERVICE_KEY
+
+Required. Until it is set, every `/internal/*` route returns `503` with the
+fix command in the body — including the two that write (browser capture into
+D1, screenshots into R2). This is deliberate: the Worker also serves a public
+marketing page, so leaving those open by default meant anyone who found the
+host could publish rows onto the public search results and fill an R2 bucket
+on the operator's bill.
+
+```bash
+wrangler secret put SERVICE_KEY   # use the value already in grant-capture's Settings
+```
+
+`apps/grant-capture` already sends `Authorization: Bearer <token>` from its
+Settings and already refuses to post without one, so matching the two values
+is the whole migration. Cron is unaffected either way — `scheduled()` calls
+the ingest functions directly rather than through `fetch()`.
+
+## Scheduled work
+
+One daily cron trigger (`0 6 * * *`), three independent best-effort passes —
+a failure in one never blocks the others:
+
+| Pass | What it does |
+| --- | --- |
+| `runGrantIngest` | Grants.gov (12 query slices) + SBIR.gov (all agencies), upsert and close-stale |
+| `enrichDueCaptures` | Vision enrichment for staged screenshots |
+| `refreshStale990Overviews` | The stalest slice of funder 990 overviews — never-fetched first, then oldest |
+
+The 990 pass is bounded rather than a full sweep: anything older than 30
+days, at most 8 funders per tick. A 990 is an annual filing, so re-pulling
+every funder daily would be hundreds of ProPublica requests a month to learn
+nothing. `POST /internal/990-all` still forces a full re-pull on demand.
 
 ## The tiered search
 

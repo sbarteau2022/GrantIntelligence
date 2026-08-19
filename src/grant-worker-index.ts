@@ -20,7 +20,7 @@
 // ============================================================
 
 import { runGrantIngest, seedOpportunities, type GrantWorkerEnv } from './grant-ingest';
-import { run990OverviewForAllFunders } from './grant-990';
+import { run990OverviewForAllFunders, refreshStale990Overviews } from './grant-990';
 import { enrichDueCaptures, stageVisualCapture, type MultimodalEnv } from './multimodal-intake';
 import { ingestAtlasObservations } from './grant-observation';
 import {
@@ -38,6 +38,13 @@ export interface Env extends GrantWorkerEnv, MultimodalEnv, GrantSearchEnv {
 // Worker do work on our bill.
 const MAX_SEARCH_BODY_BYTES = 8 * 1024;
 
+// Access-Control-Allow-Origin stays '*' deliberately. apps/grant-capture's
+// MV3 service worker declares no host_permissions (the endpoint is operator-
+// configurable, so pinning one would mean requesting <all_urls>), which
+// means its fetch IS subject to CORS — a narrower policy would break
+// capture. With authorizeInternal() failing closed, a permissive origin
+// policy costs nothing: a hostile page can issue the request and still
+// cannot authenticate it.
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -62,13 +69,38 @@ function timingSafeEqualStr(a: string, b: string): boolean {
 
 // Same posture as elle-worker's ELLE_SERVICE_KEY / RAPIDAi's
 // INGEST_API_TOKEN: a shared secret bearer token for machine callers.
-// Dormant (open) until SERVICE_KEY is actually configured, matching this
-// codebase's convention elsewhere of "today's behaviour is unchanged" until
-// deliberately armed.
-function isAuthorized(request: Request, env: Env): boolean {
-  if (!env.SERVICE_KEY) return true;
+//
+// This USED to return true when SERVICE_KEY was unset — "dormant until
+// deliberately armed," which was defensible while nothing pointed at this
+// Worker. It is not defensible now: the same Worker serves a public
+// marketing page, so the hostname is meant to be found, and two of the
+// routes behind this gate write to D1 and R2. Open-by-default meant anyone
+// who found the host could publish rows onto the public search results and
+// fill an R2 bucket on the operator's bill.
+//
+// It now fails CLOSED. Unset SERVICE_KEY = every /internal/* route returns
+// 503 with the exact command to fix it. This is not a silent behavior
+// change to paper over: capture stops working until the secret is set,
+// which is the point — apps/grant-capture already refuses to post without
+// an operator token and already sends it as `Authorization: Bearer <token>`,
+// so setting SERVICE_KEY to that same value is the whole migration.
+//
+// Cron is unaffected either way: scheduled() calls the ingest functions
+// directly rather than through fetch(), so it never passes through here.
+type AuthFailure = { status: number; error: string };
+
+const SERVICE_KEY_UNSET: AuthFailure = {
+  status: 503,
+  error:
+    'internal routes are not configured: SERVICE_KEY is unset, so this Worker refuses /internal/* rather than serving it open. ' +
+    'Set it with `wrangler secret put SERVICE_KEY` (use the same value the grant-capture extension has in its Settings), then retry.',
+};
+
+function authorizeInternal(request: Request, env: Env): AuthFailure | null {
+  if (!env.SERVICE_KEY) return SERVICE_KEY_UNSET;
   const presented = request.headers.get('Authorization') || '';
-  return timingSafeEqualStr(presented, `Bearer ${env.SERVICE_KEY}`);
+  if (!timingSafeEqualStr(presented, `Bearer ${env.SERVICE_KEY}`)) return { status: 401, error: 'Unauthorized' };
+  return null;
 }
 
 export default {
@@ -113,7 +145,14 @@ export default {
         return json({ tier, tier_requested: requested, entitlement_enforced: enforced, ...found });
       }
 
-      if (!isAuthorized(request, env)) return json({ error: 'Unauthorized' }, 401);
+      // Everything below this line is an internal route.
+      const denied = authorizeInternal(request, env);
+      if (denied) {
+        if (denied.status === 503) {
+          console.error('[grant-worker] refused %s: SERVICE_KEY is unset — see `wrangler secret put SERVICE_KEY`', url.pathname);
+        }
+        return json({ error: denied.error }, denied.status);
+      }
 
       if (request.method === 'POST' && url.pathname === '/internal/run-ingest') {
         return json(await runGrantIngest(env));
@@ -161,5 +200,11 @@ export default {
     // convention of catching per-job rather than per-tick).
     ctx.waitUntil(runGrantIngest(env).catch((e) => console.error('[CRON] runGrantIngest failed:', (e as Error).message)));
     ctx.waitUntil(enrichDueCaptures(env).catch((e) => console.error('[CRON] enrichDueCaptures failed:', (e as Error).message)));
+    // The 990 overviews had no scheduled refresh at all, so the table stayed
+    // empty and the paid tier's financials panel rendered blank. This takes
+    // a small, bounded slice per tick (never-fetched funders first, then the
+    // oldest) rather than re-pulling every funder daily — a 990 is an annual
+    // filing. See refreshStale990Overviews.
+    ctx.waitUntil(refreshStale990Overviews(env).catch((e) => console.error('[CRON] refreshStale990Overviews failed:', (e as Error).message)));
   },
 };
