@@ -2,8 +2,9 @@
 
 A single Cloudflare Worker with two jobs:
 
-- **Public surface**: serves `public/` — the marketing page now, the
-  authenticated app UI later.
+- **Public surface**: serves `public/` — the marketing page and its tiered
+  opportunity search (a visitor describes their organization and gets the
+  matching opportunities back, scored); the authenticated app UI later.
 - **Grant data layer**: ingests, verifies, dedupes, and maintains
   `grant_opportunities`, `grant_recipients`, and `grant_funder_990_overview`,
   plus its own multimodal (vision) intake. Moved out of elle-worker entirely
@@ -30,9 +31,10 @@ public/
   assets/
     industry.css      design-system tokens (source of truth for the look)
     site.css          page layout on top of the tokens
-    app.js             vanilla JS: NECAI-F/990 trace, cascade reveal, hero tilt
+    app.js             vanilla JS: the search console, NECAI-F/990 trace, cascade reveal, hero tilt
 src/
-  grant-worker-index.ts   fetch/scheduled entry point — /health, /internal/*, cron
+  grant-worker-index.ts   fetch/scheduled entry point — /health, /api/*, /internal/*, cron
+  grant-search.ts         the public tiered search: profile -> structural score -> tier gate
   grant-ingest.ts         daily pull from Grants.gov + SBIR.gov, plus the manual seed
   grant-990.ts            funder financial overviews via ProPublica's Nonprofit Explorer
   grant-observation.ts    gate/upsert for apps/grant-capture's browser-captured rows
@@ -41,6 +43,7 @@ src/
 apps/grant-capture/       browser extension that posts observations to this Worker
 wrangler.jsonc            one Worker: assets (public/) + Worker script (src/) + bindings + cron
 package.json              npm scripts (dev, deploy, typecheck, test) + devDependencies
+docs/AUDIT.md             repo audit — what's fixed, what's outstanding, and why
 ```
 
 ## Why one Worker
@@ -55,17 +58,25 @@ directory it resolves — a mismatch between the two configs broke deploys
 outright. Folding the data layer into the same Worker as the static site
 removes the ambiguity: there's exactly one `wrangler.jsonc` in this repo.
 
-`/health` and `/internal/*` are routed to the Worker script ahead of the
-SPA fallback via `assets.run_worker_first` in `wrangler.jsonc` — everything
+`/health`, `/api/*` and `/internal/*` are routed to the Worker script ahead
+of the SPA fallback via `assets.run_worker_first` in `wrangler.jsonc` — everything
 else falls through to `public/`'s static assets (or `index.html` if
 nothing matches, since the marketing page is currently a single-page app).
 
 ## Endpoints
 
-All `/internal/*` routes are gated by `SERVICE_KEY` (a bearer token) once
-that secret is set — dormant/open until then.
+`/api/*` is public and read-only. All `/internal/*` routes are gated by
+`SERVICE_KEY` (a bearer token) once that secret is set — dormant/open until
+then, which `docs/AUDIT.md` finding 1 argues should change now that the
+Worker serves a page meant to be found.
 
 - `GET /health` — always open.
+- `GET /api/tiers` — the tier specs and the form vocabulary (entity types,
+  stages, funding bands), served from the same constants the scorer uses so
+  the form can't offer an option scoring doesn't understand.
+- `POST /api/search` — body `{ profile, tier }`. Scores every open
+  opportunity against the profile and returns the tier's slice. See
+  "The tiered search" below.
 - `POST /internal/run-ingest` — manual trigger for the live pull (also runs
   daily via cron).
 - `POST /internal/seed` — re-run the manual seed.
@@ -76,6 +87,43 @@ that secret is set — dormant/open until then.
 - `POST /internal/atlas-observation` — apps/grant-capture's DOM-scrape batch.
 - `POST /internal/visual-capture?opportunity_id=<id>` — stage a screenshot
   (raw image bytes as the body) for later enrichment.
+
+## The tiered search
+
+`src/grant-search.ts`. A visitor supplies the public subset of the profile
+elle-worker stores in `grant_organizations` — track, entity type, state,
+stage, funding needed, and what the organization actually does — and every
+open row in `grant_opportunities` is scored against it on five structural
+features: mission-term overlap, entity fit, award size, geographic scope,
+and deadline state.
+
+Two rules the code holds to, both inherited from the engine spec:
+
+- **No recommendation.** Every signal used is named and explained; nothing
+  is ever ranked as "you should apply here." The applicant decides.
+- **Unknown is not zero.** A feature the data can't answer (no award amount
+  on file, a deadline that doesn't parse, a field the visitor skipped) is
+  dropped from the denominator and reported in `gaps` — never scored as a
+  miss. A thin record must not read as a bad match.
+
+It is deliberately not an LLM call: it runs unauthenticated on every
+search, so it has to be cheap, deterministic, and explainable line by line.
+elle-worker's `runFitAnalysis` — the LLM fit index with a sealed reasoning
+log — is the authenticated counterpart this pre-filters for.
+
+**Tiers** (`TIERS` in the same file) mirror the pricing section: Basic gets
+matches, deadlines and requirements; Supported and above add the fit index,
+the signal breakdown, the NECAI-F flag and the 990 overview. The fields a
+tier doesn't get are stripped server-side *before* serialization — the
+browser is never sent something it is meant to hide.
+
+**Entitlement** is resolved by `resolveTier()`. With `TIER_KEYS` unset
+(today) every tier is open to preview, and the UI says so rather than
+implying a paywall exists. Set it — `wrangler secret put TIER_KEYS`, a JSON
+object mapping entitlement key to tier — and requests must then present
+`X-GI-Entitlement: <key>`; anything unrecognized, including malformed
+`TIER_KEYS`, falls back to Basic rather than erroring, so a lapsed key
+degrades to the free product instead of a broken page.
 
 ## Getting started
 

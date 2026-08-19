@@ -147,7 +147,23 @@ export async function fetchGrantsGovOpportunities(): Promise<{ opportunities: No
       });
       if (!res.ok) { errors.push(`grants.gov ${q.agencies}: HTTP ${res.status}`); continue; }
       const data = (await res.json().catch(() => null)) as { data?: { oppHits?: GrantsGovHit[] } } | null;
-      const hits = Array.isArray(data?.data?.oppHits) ? data!.data!.oppHits! : [];
+      // An envelope we don't recognize is an ERROR, not zero results. These
+      // shapes come from public documentation, not a verified live response
+      // (see the module header), so a silent upstream change would otherwise
+      // read as "every grants.gov opportunity closed at once" and the
+      // close-stale pass below would act on it. A well-formed response whose
+      // oppHits is empty (or omits the key) is still a real, clean zero and
+      // does close stale rows — that distinction is the whole point.
+      if (!data || typeof data.data !== 'object' || data.data === null) {
+        errors.push(`grants.gov ${q.agencies}: unrecognized response envelope (no "data" object)`);
+        continue;
+      }
+      const rawHits = data.data.oppHits;
+      if (rawHits != null && !Array.isArray(rawHits)) {
+        errors.push(`grants.gov ${q.agencies}: unrecognized response envelope ("data.oppHits" is not an array)`);
+        continue;
+      }
+      const hits = rawHits ?? [];
       for (const hit of hits) {
         const norm = normalizeGrantsGovHit(hit);
         if (norm) opportunities.push(norm);
@@ -198,8 +214,15 @@ export async function fetchSbirOpportunities(): Promise<{ opportunities: Normali
     const res = await fetch(SBIR_URL, { headers: { 'user-agent': USER_AGENT } });
     if (!res.ok) return { opportunities: [], errors: [`sbir.gov: HTTP ${res.status}`] };
     const data = (await res.json().catch(() => null)) as SbirSolicitation[] | null;
+    // Same rule as grants.gov above: a non-array body is an unrecognized
+    // envelope (an error), never an empty catalogue. An actual empty array
+    // IS a clean zero — NSF SBIR genuinely has no open solicitations while
+    // reauthorization is pending — and does close stale rows.
+    if (!Array.isArray(data)) {
+      return { opportunities: [], errors: ['sbir.gov: unrecognized response envelope (expected a JSON array)'] };
+    }
     const opportunities: NormalizedLiveOpportunity[] = [];
-    for (const s of Array.isArray(data) ? data : []) {
+    for (const s of data) {
       const norm = normalizeSbirSolicitation(s);
       if (norm) opportunities.push(norm);
     }
