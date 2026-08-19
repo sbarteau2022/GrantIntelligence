@@ -124,8 +124,21 @@ describe('fetchSbirOpportunities', () => {
     expect(errors).toEqual([expect.stringMatching(/HTTP 500/)]);
   });
 
-  it('tolerates a non-array response body', async () => {
+  // This used to assert "tolerates a non-array response body" with NO error.
+  // It survives without throwing either way — but silently reporting zero
+  // opportunities is what runGrantIngest's close-stale pass reads as "every
+  // sbir.gov row just closed," which would wipe the source's catalogue on an
+  // upstream envelope change. An unrecognized shape is an error; an actual
+  // empty array is still a clean zero (see the next test).
+  it('reports an unrecognized response envelope as an error, not as zero opportunities', async () => {
     stubFetch([{ match: 'solicitations', json: { unexpected: 'shape' } }]);
+    const { opportunities, errors } = await fetchSbirOpportunities();
+    expect(opportunities).toHaveLength(0);
+    expect(errors).toEqual([expect.stringMatching(/unrecognized response envelope/)]);
+  });
+
+  it('treats a well-formed empty array as a clean zero, with no error', async () => {
+    stubFetch([{ match: 'solicitations', json: [] }]);
     const { opportunities, errors } = await fetchSbirOpportunities();
     expect(opportunities).toHaveLength(0);
     expect(errors).toHaveLength(0);

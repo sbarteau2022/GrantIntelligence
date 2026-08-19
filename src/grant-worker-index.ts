@@ -10,18 +10,33 @@
 // D1 binding (GRANT_DB) — never HTTP — so nothing here can add latency or
 // failure modes to elle-worker's request path.
 //
-// Everything below is either a cron tick or a service-key-gated internal
-// call — there is no end-user-facing surface on this worker.
+// Three kinds of route live here, and they are gated differently:
+//   • /health                 — always open.
+//   • /api/*                  — PUBLIC, unauthenticated. The marketing
+//                               page's tiered opportunity search (see
+//                               grant-search.ts). Read-only, no LLM call.
+//   • /internal/*             — service-key-gated machine calls + cron.
+// Everything else falls through to the static assets in public/.
 // ============================================================
 
 import { runGrantIngest, seedOpportunities, type GrantWorkerEnv } from './grant-ingest';
 import { run990OverviewForAllFunders } from './grant-990';
 import { enrichDueCaptures, stageVisualCapture, type MultimodalEnv } from './multimodal-intake';
 import { ingestAtlasObservations } from './grant-observation';
+import {
+  searchOpportunities, resolveTier, TIERS, TIER_ORDER, ORG_TYPES, ENTITY_STAGES, FUNDING_BANDS,
+  type GrantSearchEnv,
+} from './grant-search';
 
-export interface Env extends GrantWorkerEnv, MultimodalEnv {
+export interface Env extends GrantWorkerEnv, MultimodalEnv, GrantSearchEnv {
   SERVICE_KEY?: string;
 }
+
+// The public search reads a few thousand rows and scores them in memory —
+// cheap, but not free, and it sits on an unauthenticated route. Cap the
+// request body so a multi-megabyte "profile" can't be used to make the
+// Worker do work on our bill.
+const MAX_SEARCH_BODY_BYTES = 8 * 1024;
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -31,6 +46,10 @@ const CORS_HEADERS = {
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } });
+}
+
+function safeParse(text: string): unknown {
+  try { return JSON.parse(text); } catch { return null; }
 }
 
 function timingSafeEqualStr(a: string, b: string): boolean {
@@ -61,6 +80,37 @@ export default {
     try {
       if (request.method === 'GET' && url.pathname === '/health') {
         return json({ status: 'ok', ts: new Date().toISOString() });
+      }
+
+      // ── Public API (no service key) ───────────────────────────────────
+      // The vocabulary the search form is built from. Served from the same
+      // constants the scorer uses, so the form can never offer an option
+      // scoring doesn't understand.
+      if (request.method === 'GET' && url.pathname === '/api/tiers') {
+        return json({
+          tiers: TIER_ORDER.map((t) => TIERS[t]),
+          org_types: ORG_TYPES,
+          entity_stages: ENTITY_STAGES,
+          funding_bands: FUNDING_BANDS,
+        });
+      }
+
+      // The tiered opportunity search. Body: { profile, tier }.
+      // Tier entitlement is resolved server-side (resolveTier) and the
+      // fields a tier doesn't get are removed BEFORE serialization — the
+      // browser is never sent something it's meant to hide.
+      if (request.method === 'POST' && url.pathname === '/api/search') {
+        const rawBody = await request.text();
+        if (rawBody.length > MAX_SEARCH_BODY_BYTES) {
+          return json({ error: 'request body too large' }, 413);
+        }
+        const body = (rawBody ? safeParse(rawBody) : {}) as { profile?: unknown; tier?: unknown } | null;
+        if (!body) return json({ error: 'invalid JSON body' }, 400);
+        const { tier, requested, enforced } = resolveTier(
+          env, body.tier, request.headers.get('X-GI-Entitlement'),
+        );
+        const found = await searchOpportunities(env, body.profile, tier);
+        return json({ tier, tier_requested: requested, entitlement_enforced: enforced, ...found });
       }
 
       if (!isAuthorized(request, env)) return json({ error: 'Unauthorized' }, 401);

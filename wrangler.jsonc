@@ -5,10 +5,12 @@
   // separate "grant-worker" Worker, folded in here to remove the two-
   // wrangler-config split that kept breaking CI/deploy).
   //
-  // /health and /internal/* are service-key-gated worker routes (see
-  // isAuthorized() in src/grant-worker-index.ts) — run_worker_first routes
-  // them to the Worker script before the SPA fallback would otherwise
-  // swallow them as "not found -> serve index.html".
+  // /health, /api/* (the public tiered opportunity search the marketing
+  // page calls) and /internal/* (service-key-gated machine calls — see
+  // isAuthorized() in src/grant-worker-index.ts) are Worker routes;
+  // run_worker_first routes them to the Worker script before the SPA
+  // fallback would otherwise swallow them as "not found -> serve
+  // index.html".
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "grantintelligence",
   "main": "./src/grant-worker-index.ts",
@@ -21,7 +23,7 @@
   "assets": {
     "directory": "./public",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/health", "/internal/*"]
+    "run_worker_first": ["/health", "/api/*", "/internal/*"]
   },
   "observability": {
     "enabled": true

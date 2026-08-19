@@ -13,6 +13,17 @@ body { overflow-x: hidden; }
 .nav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--color-bg) 92%, transparent); backdrop-filter: blur(6px); }
 .nav-brand { display: inline-flex; align-items: center; gap: 9px; }
 .nav-mark { width: 20px; height: 20px; color: var(--color-accent-800); flex: none; }
+/* The nav is sticky, so an in-page jump lands its target underneath it.
+   Every anchor target keeps a nav's worth of clearance above it. */
+[id] { scroll-margin-top: 76px; }
+/* Below this width the six links + button can't sit on one row with the
+   wordmark; the wordmark takes its own row and the links wrap under it
+   rather than overflowing off-screen. */
+@media (max-width: 780px) {
+  .nav { flex-wrap: wrap; row-gap: var(--space-2); }
+  .nav-brand { flex: 1 0 100%; margin-right: 0; }
+  .nav > .btn { margin-left: auto; }
+}
 
 /* A faint drafting-table grid, the "keep the grid visible" instruction made
    literal. Extremely low contrast on purpose — texture, not decoration. */
@@ -90,11 +101,157 @@ body { overflow-x: hidden; }
 }
 .steel-line strong { color: var(--color-accent-200); }
 
+/* ══ the search console (#search) ═════════════════════════════════════════
+   Two columns: the applicant-profile form, and the tier rail that decides
+   how much of each result comes back. On narrow screens the rail moves
+   above the form — choosing a tier is the frame you read results in, so it
+   should not end up below the fold under the results themselves. */
+.console {
+  margin-top: var(--space-6);
+  display: grid; grid-template-columns: 1.55fr 1fr; gap: var(--space-6);
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .console { grid-template-columns: 1fr; }
+  .console-form { order: 2; }
+  .tier-rail { order: 1; }
+}
+
+.console-form { padding: var(--space-6); background: var(--color-bg); }
+.console-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: var(--space-3); flex-wrap: wrap;
+  padding-bottom: var(--space-3); margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
+}
+.console-meta { font-size: 11px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+.console-form .field { margin-bottom: var(--space-4); }
+.console-form textarea.input { resize: vertical; min-height: 72px; font-family: var(--font-body); }
+.field-hint {
+  display: block; margin-top: var(--space-1);
+  font-size: 11.5px; color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 var(--space-4); }
+@media (max-width: 520px) { .form-grid { grid-template-columns: 1fr; } }
+.console-note { margin: var(--space-3) 0 0; font-size: 12px; min-height: 1.2em; }
+.console-note.is-error { color: var(--color-accent-800); font-weight: 600; }
+
+/* — the tier rail — */
+.tier-rail { position: sticky; top: 76px; }
+.tier-list { display: flex; flex-direction: column; margin-top: var(--space-2); border: 1px solid var(--color-divider); }
+.tier-opt {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  background: transparent; border: none; border-top: 1px solid var(--color-divider);
+  color: inherit; font-family: var(--font-body);
+}
+.tier-opt:first-child { border-top: none; }
+.tier-opt:hover { background: color-mix(in srgb, var(--color-text) 5%, transparent); }
+.tier-opt[aria-checked="true"] { background: var(--color-accent-100); box-shadow: inset 3px 0 0 var(--color-accent); }
+.tier-opt:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+.tier-opt-name {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 16px; display: flex; justify-content: space-between; gap: var(--space-2);
+}
+.tier-opt-cap { font-size: 11px; color: var(--color-accent-700); font-family: var(--font-body); font-weight: 400; }
+.tier-opt-price { font-size: 12px; opacity: 0.75; }
+.tier-opt-unlocks { margin: var(--space-2) 0 0; padding-left: 1.1em; font-size: 12px; opacity: 0.85; display: none; }
+.tier-opt[aria-checked="true"] .tier-opt-unlocks { display: block; }
+.tier-opt-unlocks li { margin-bottom: 2px; }
+.tier-note { margin-top: var(--space-3); font-size: 11.5px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+
+/* — results — */
+.results { margin-top: var(--space-8); }
+.results-head { border-top: 1px solid var(--color-divider); padding-top: var(--space-4); }
+.results-head h3 { margin: 0; font-size: 22px; }
+.results-head p { margin: var(--space-1) 0 0; font-size: 13px; }
+.result-list { list-style: none; margin: var(--space-4) 0 0; padding: 0; display: grid; gap: var(--space-6); }
+
+.result { padding: var(--space-4); background: var(--color-bg); }
+.result-top { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); }
+.result-funder { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-accent-700); }
+.result-program { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 19px; line-height: 1.2; }
+.result-band {
+  flex: none; font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 11px; letter-spacing: 0.08em; padding: 3px var(--space-2); border: 1px solid currentColor;
+}
+.band-strong { color: var(--color-accent-800); background: var(--color-accent-200); }
+.band-possible { color: var(--color-accent-700); }
+.band-weak { color: var(--color-neutral-600); }
+
+.result-facts {
+  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6);
+  margin-top: var(--space-3); padding-top: var(--space-3);
+  border-top: 1px solid var(--color-divider); font-size: 13px;
+}
+.result-facts b {
+  display: block; font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.result-req { margin: var(--space-3) 0 0; font-size: 13px; opacity: 0.85; }
+
+/* the fit breakdown — Supported and above */
+.result-fit { margin-top: var(--space-4); border-top: 1px solid var(--color-divider); padding-top: var(--space-3); }
+.fit-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+.fit-head .card-kicker { flex: none; }
+.fit-index { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 20px; color: var(--color-accent-700); }
+.signal { margin-top: var(--space-3); }
+.signal-row { display: flex; align-items: center; gap: var(--space-3); font-size: 13px; }
+.signal-label { flex: none; width: 116px; font-weight: 600; }
+.signal-bar { flex: 1; height: 6px; background: var(--color-neutral-200); position: relative; }
+.signal-bar > i { position: absolute; inset: 0 auto 0 0; background: var(--color-accent); display: block; }
+.signal-pct { flex: none; width: 40px; text-align: right; font-size: 12px; opacity: 0.7; }
+.signal-detail { margin: 2px 0 0 calc(116px + var(--space-3)); font-size: 12px; opacity: 0.8; }
+@media (max-width: 560px) {
+  .signal-label { width: 88px; }
+  .signal-detail { margin-left: 0; }
+}
+.fit-gaps { margin-top: var(--space-4); padding: var(--space-3); background: var(--color-surface); }
+.fit-gaps ul { margin: var(--space-2) 0 0; padding-left: 1.1em; font-size: 12px; opacity: 0.85; }
+.fit-gaps li { margin-bottom: 2px; }
+
+/* the 990 strip — Supported and above, foundation/corporate funders */
+.fin-strip { margin-top: var(--space-4); border-top: 1px solid var(--color-divider); padding-top: var(--space-3); }
+.fin-figures { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); margin-top: var(--space-2); font-size: 13px; }
+.fin-figures b {
+  display: block; font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.fin-source { display: block; margin-top: var(--space-2); font-size: 11.5px; }
+
+/* what Basic doesn't get — shown as a stated absence, never a blur or a
+   teaser. The field names are the ones the API itself reports as locked. */
+.result-locked {
+  margin-top: var(--space-4); padding: var(--space-3);
+  border: 1px dashed var(--color-divider); font-size: 12.5px;
+  display: flex; align-items: center; gap: var(--space-3);
+}
+.result-locked svg { width: 15px; height: 15px; flex: none; color: var(--color-accent-700); }
+
+.locked-strip { margin-top: var(--space-6); padding: var(--space-4); background: var(--color-accent-900); color: var(--color-bg); }
+.locked-strip-body { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
+.locked-strip-text { font-size: 14px; max-width: 62ch; }
+.locked-strip .btn-primary { background: var(--color-bg); color: var(--color-accent-900); border-color: var(--color-bg); }
+.locked-strip .btn-primary:hover { background: var(--color-accent-200); }
+
+.disclosure-panel { margin-top: var(--space-6); padding: var(--space-4); background: var(--color-bg); }
+.disclosure-panel > summary {
+  cursor: pointer; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 15px;
+}
+.disclosure-panel-body { margin-top: var(--space-3); font-size: 13px; }
+.disclosure-panel-body p { margin: 0 0 var(--space-2); }
+.disclosure-panel-body p strong { font-family: var(--font-heading); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+.disclosure-panel-body ul { margin: 0 0 var(--space-4); padding-left: 1.1em; opacity: 0.85; }
+
 /* — grids — */
 .grid { display: grid; gap: var(--space-4); margin-top: var(--space-6); }
 .grid-4 { grid-template-columns: repeat(4, 1fr); }
 @media (max-width: 900px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 560px) { .grid-4 { grid-template-columns: 1fr; } }
+
+.pricing-note { margin-top: var(--space-4); font-size: 12.5px; }
 
 .card-icon { width: 26px; height: 26px; color: var(--color-accent-700); margin-bottom: 2px; }
 .card.blueprint { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
