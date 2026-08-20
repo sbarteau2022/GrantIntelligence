@@ -2,49 +2,65 @@
 
 Read of the whole repo as it stood at `232ac11`, before the tiered public
 search landed. Findings are ordered by what would hurt first, not by how
-interesting they are. Each says plainly whether this branch fixed it.
+interesting they are. Each says plainly whether it has been fixed, and
+finding 1 carries a correction to what an earlier revision of this document
+claimed.
 
 Baseline at the time of the audit: `tsc --noEmit` clean, 57 tests passing
-across 4 suites.
+across 4 suites. Now: 112 tests across 6 suites.
 
 ---
 
-## 1. Every `/internal/*` route is open to the internet — NOT FIXED HERE
+## 1. Every `/internal/*` route was open to the internet — FIXED
 
-`isAuthorized()` returns `true` whenever `SERVICE_KEY` is unset, and
-`SERVICE_KEY` is unset. That is a deliberate, documented posture ("dormant
+`isAuthorized()` returned `true` whenever `SERVICE_KEY` was unset, and
+`SERVICE_KEY` was unset. That was a deliberate, documented posture ("dormant
 until deliberately armed"), and it was defensible while nothing pointed at
-the Worker. It is no longer, because the same Worker now serves a public
-marketing page — the hostname is meant to be found.
+the Worker. It stopped being defensible the moment the same Worker started
+serving a marketing page — the hostname is meant to be found.
 
-What an anonymous caller can currently do:
+What an anonymous caller could do:
 
 | Route | Effect |
 | --- | --- |
-| `POST /internal/atlas-observation` | **Writes rows into `grant_opportunities`.** These now render on the public search results. |
-| `POST /internal/visual-capture` | **Writes arbitrary bytes into R2**, one object per call, unbounded. |
-| `POST /internal/enrich-captures` | Spends Workers AI inference on every staged capture. |
-| `POST /internal/990-all` | Fans out to ProPublica once per foundation/corporate funder. |
-| `POST /internal/run-ingest` | Fans out to Grants.gov and SBIR.gov. |
-| `POST /internal/seed` | Rewrites the seeded rows. |
+| `POST /internal/atlas-observation` | **Wrote rows into `grant_opportunities`.** Those render on the public search results. |
+| `POST /internal/visual-capture` | **Wrote arbitrary bytes into R2**, one object per call, unbounded. |
+| `POST /internal/enrich-captures` | Spent Workers AI inference on every staged capture. |
+| `POST /internal/990-all` | Fanned out to ProPublica once per foundation/corporate funder. |
+| `POST /internal/run-ingest` | Fanned out to Grants.gov and SBIR.gov. |
+| `POST /internal/seed` | Rewrote the seeded rows. |
 
-The first two are the serious pair: one lets a stranger publish content on
-the site, the other is unmetered storage on the account's bill. The rest
-are amplification — cheap for the caller, billed to the operator, and
-capable of getting the Worker rate-limited by the upstream APIs it depends
-on.
+**Correction to the previous revision of this audit.** It said arming
+`SERVICE_KEY` "without updating the extension in the same motion would break
+capture," and used that to justify leaving the hole open. That was wrong, and
+checking `apps/grant-capture/background.js` would have shown it: the
+extension already refuses to post without an operator token and already
+sends it as `Authorization: Bearer <token>` on both endpoints. There was no
+migration to do. The only real obstacle was that running
+`wrangler secret put` needs credentials a pull request doesn't have — which
+is an argument for changing the default, not for leaving it open.
 
-`CORS_HEADERS` is `Access-Control-Allow-Origin: *` on every route including
-these, so they are also reachable from any page in any browser.
+**Fixed** in `src/grant-worker-index.ts`: `authorizeInternal()` fails
+**closed**. Unset `SERVICE_KEY` now returns `503` on every `/internal/*`
+route, with the exact command to fix it in the error body and a warning in
+the Worker log. A wrong or absent token against an armed key returns `401`.
 
-**Fix:** `wrangler secret put SERVICE_KEY`, then set the same value in
-whatever calls `apps/grant-capture`. No code change is required — the gate
-is already written and already tested. This is one command, and it is the
-single highest-value thing outstanding in this repo.
+This is a deliberate breaking change, stated plainly: **until
+`wrangler secret put SERVICE_KEY` is run, browser capture and the manual
+internal triggers will return 503.** Setting it to the value already in the
+extension's Settings restores both. Cron is unaffected — `scheduled()` calls
+the ingest functions directly rather than through `fetch()`, so it never
+passes through the gate.
 
-Left undone here on purpose: setting a production secret is the operator's
-call, not a pull request's, and arming it without updating the extension in
-the same motion would break capture.
+`Access-Control-Allow-Origin` stays `*`, on purpose. The extension's MV3
+service worker declares no `host_permissions` (the endpoint is operator-
+configurable, so pinning one would mean requesting `<all_urls>`), so its
+fetch **is** subject to CORS and a narrower policy would break capture. With
+the gate failing closed, a permissive origin policy costs nothing: a hostile
+page can issue the request and still cannot authenticate it.
+
+`src/grant-worker-index.test.ts` is new and pins all of this — the entry
+point previously had no tests at all, which is how it shipped open.
 
 ## 2. A silent upstream shape change could close the whole catalogue — FIXED
 
@@ -84,49 +100,79 @@ that renders this data must do the same — the gate normalizes shape, not
 markup, and it is not the place to fix this (stripping tags at ingest would
 corrupt the corpus elle-worker reasons over).
 
-## 4. The 990 overviews are never refreshed on their own — NOT FIXED
+## 4. The 990 overviews were never refreshed on their own — FIXED
 
-`scheduled()` runs two passes:
+`scheduled()` ran two passes — `runGrantIngest` and `enrichDueCaptures`.
+`run990OverviewForAllFunders` was not among them. It existed, it worked, and
+it was reachable only by hand through `POST /internal/990-all`. So
+`grant_funder_990_overview` stayed empty until someone remembered, and the
+Supported tier's financials panel rendered blank against the real database.
 
-```ts
-ctx.waitUntil(runGrantIngest(env)…);
-ctx.waitUntil(enrichDueCaptures(env)…);
-```
+**Fixed** in `src/grant-990.ts` + the cron: `refreshStale990Overviews()`
+takes a small, bounded slice per daily tick — funders never fetched first,
+then the oldest — instead of re-pulling every funder daily. A 990 is an
+annual filing; a daily full sweep would be hundreds of ProPublica requests a
+month to learn nothing, which is why the previous revision of this audit
+left it alone rather than doing the obvious wrong thing.
 
-`run990OverviewForAllFunders` is not among them. It exists, it works, and
-it is reachable only through `POST /internal/990-all` by hand. So
-`grant_funder_990_overview` stays empty until someone remembers.
+Defaults: refresh anything older than 30 days, at most 8 funders per run.
+That is 240 funder-refreshes a month — comfortably more than this corpus
+holds, and a rounding error against ProPublica. `POST /internal/990-all`
+still exists for a deliberate "re-pull everything now."
 
-This has a visible consequence now: the Supported tier promises a 990
-financial overview, and `searchOpportunities` will correctly return `null`
-for every funder because the table has no rows. The code is honest about
-it; the product still looks thin.
+Per-funder errors are already persisted by `run990Overview` (the row keeps
+its `error` column), so one funder ProPublica can't resolve never stops the
+rest of the slice. Verified against a real local D1: the query is valid, the
+never-fetched-first ordering holds, and a fully-current corpus correctly
+selects nothing.
 
-Not fixed here because the right cadence is a judgment call — 990 filings
-change roughly annually, so a daily fan-out to ProPublica across every
-foundation on file is mostly wasted requests. A monthly cron, or a
-refresh-if-older-than-N-days check inside the existing daily tick, both fit;
-that choice belongs with the operator.
+## 5. The searchable corpus was thin — BROADENED, not solved
 
-## 5. The searchable corpus is thin — NOT FIXED, and it is the real product risk
+The live ingest was three Grants.gov queries (VA, HHS-SAMHSA, NSF) plus NSF
+SBIR, narrowed to one operator's own strategy document. Everything else was
+nine hand-entered seed rows. That made the public search only as good as
+that document: a visitor outside those three agencies' subject areas got a
+short list and no way to tell whether it meant "few matches" or "few
+records."
 
-The live ingest is three Grants.gov queries (VA, HHS-SAMHSA, NSF) plus NSF
-SBIR, narrowed to one operator's own strategy document. Everything else is
-nine hand-entered seed rows. The private foundations and accelerators that
-matter most to the target user have no public search API and arrive only
-through the browser extension, one page at a time.
+**Broadened** in `src/grant-ingest.ts`:
 
-That is a coherent design, and the module headers say so. But the promise
-now on the front page is "your details in, the funders that fit, out" — and
-a visitor in a state or sector the corpus does not cover gets a short list
-and no way to tell whether that means "few matches" or "few records."
+- **Grants.gov: 3 queries → 12.** The three agency-pinned slices are kept
+  (an agency filter surfaces listings whose titles don't contain the topic
+  words at all), and nine agency-agnostic topic sweeps are added across
+  veterans, mental health, substance use, rural health, workforce, housing,
+  community development, AI, and small-business innovation. The `agencies`
+  field is now omitted entirely rather than sent as `null` for those —
+  search2 treats present-but-empty differently from absent.
+- **SBIR.gov: NSF only → every agency.** SBIR/STTR is eleven agencies, all
+  of them non-dilutive money a small company can actually reach; pinning to
+  NSF hid the other ten from every visitor on the business track. Still one
+  subrequest either way.
 
-Partially mitigated: the search response ships a `disclosure.limits` array
-that says this in the visitor's own results, rendered under every search
-("Only opportunities already ingested into this database are searched —
-this is not the full federal catalog"). Saying it plainly is not the same
-as fixing it. Broadening the corpus is the next substantive piece of work
-in this repo, ahead of any further UI.
+Two consequences that had to be handled rather than discovered later:
+
+- **Overlap is now the norm.** A rural veterans' mental-health grant answers
+  three topic queries. Without dedup, the same opportunity was written once
+  per query that found it, every duplicate after the first reported as an
+  "update," and the run summary became fiction. `runGrantIngest` now dedupes
+  by stable id before touching D1, and reports both `fetched` (distinct,
+  what gets written) and `fetched_raw` (hits before dedup).
+- **`normalizeSbirSolicitation` defaulted a missing agency to "National
+  Science Foundation."** Harmless while the query itself was NSF-pinned; a
+  fabricated funder name the moment it isn't. Now `'Unknown SBIR/STTR
+  agency'`.
+
+The tests that asserted "fans out across all three queries" now derive their
+counts from `GRANTS_GOV_QUERIES.length`, so adding a topic broadens coverage
+without editing magic numbers in four assertions.
+
+**Still not solved.** This is a wider federal pull, not a full catalog, and
+it does nothing for the private foundations and accelerators that matter
+most to the target user — those have no public search API and still arrive
+one page at a time through the browser extension. The search's own
+`disclosure.limits` continues to say so in the visitor's results. The
+honest next step is a foundation-side source (Candid/FDO is the obvious
+one, and it is not free), which is a purchasing decision, not a code change.
 
 ## 6. Smaller things
 
@@ -149,19 +195,38 @@ in this repo, ahead of any further UI.
 
 ---
 
-## What this branch changed
+## What has changed since the audit
 
-- `src/grant-search.ts` — the tiered public search: profile normalization,
-  five-feature structural scoring, tier gating, one D1 read. No LLM call,
-  no recommendation, unknown never scored as zero.
-- `src/grant-search.test.ts` — 33 tests over the pure parts and the D1 edge.
-- `src/grant-worker-index.ts` — `GET /api/tiers`, `POST /api/search`, both
-  public; body cap on the search route; header corrected.
-- `src/grant-ingest.ts` — finding 2.
-- `public/` — the search console, the tier rail, the result renderer with
-  its escaping, and the pricing cards wired to the tier they name.
-- `wrangler.jsonc` — `/api/*` added to `run_worker_first`.
+**First branch** (merged as #12) — the tiered public search, findings 2 and
+3, and the doc drift under 6.
 
-Tests after: 91 passing across 5 suites, `tsc --noEmit` clean, and the page
-was driven end to end against `wrangler dev` with a seeded local D1 —
-Basic and Supported views, both tracks, desktop and mobile.
+**This branch:**
+
+- `src/grant-worker-index.ts` — finding 1: the gate fails closed, with the
+  fix command in the 503 body and a Worker-log warning. Cron unaffected.
+- `src/grant-worker-index.test.ts` — new; 10 tests over the gate and the
+  public routing that had none.
+- `src/grant-990.ts` + cron — finding 4: `refreshStale990Overviews`, a
+  bounded stale-first slice per tick, plus the pure `is990Stale` predicate.
+- `src/grant-ingest.ts` — finding 5: the broadened query set, the optional
+  agency filter, all-agency SBIR, id-level dedup, and the SBIR funder-name
+  fallback fix.
+- Tests: 112 passing across 6 suites, `tsc --noEmit` clean.
+
+Verified against a live `wrangler dev` with a local D1, not just stubs:
+every `/internal/*` route returns 503 unarmed and 401 on a bad token;
+`/health`, `/api/*` and the marketing page keep serving throughout; an
+extension-shaped capture with the right token lands a row and that row
+appears in the public search; the 990 refresh SQL runs on real D1 with
+never-fetched-first ordering intact.
+
+## What is left
+
+1. **Run `wrangler secret put SERVICE_KEY`.** Capture and the manual
+   internal triggers return 503 until it is set — that is the fix working as
+   intended, not a regression. Use the value already in the grant-capture
+   extension's Settings.
+2. **A foundation-side opportunity source.** Finding 5's remainder, and a
+   purchasing decision rather than an engineering one.
+3. **The N+1 upserts** under finding 6, when the corpus is large enough to
+   care.

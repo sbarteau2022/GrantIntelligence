@@ -183,8 +183,82 @@ export async function run990Overview(
   return result;
 }
 
-// Every distinct foundation/corporate funder already on file. Runs
-// sequentially (ProPublica has no documented bulk endpoint) so one
+// ── Staleness ───────────────────────────────────────────────────────────
+// A 990 is an annual filing. Re-fetching every funder every day would be
+// hundreds of ProPublica requests a month to learn nothing — and leaving it
+// to a manual trigger, which is what shipped, meant the table simply stayed
+// empty and the paid tier's financials panel rendered blank.
+//
+// So: a small, bounded slice per daily tick. Funders never fetched go
+// first, then the oldest. At the default of 8 per run, 240 funder-refreshes
+// a month covers a corpus far larger than this one holds while staying a
+// rounding error against ProPublica.
+export const DEFAULT_990_MAX_AGE_DAYS = 30;
+export const DEFAULT_990_REFRESH_LIMIT = 8;
+
+/** Pure: is a stored `fetched_at` old enough to re-pull? Null/unparseable = yes. */
+export function is990Stale(fetchedAt: string | null | undefined, now: Date, maxAgeDays: number): boolean {
+  if (!fetchedAt) return true;
+  const ms = Date.parse(fetchedAt);
+  if (Number.isNaN(ms)) return true;
+  return now.getTime() - ms >= maxAgeDays * 24 * 60 * 60 * 1000;
+}
+
+export interface Refresh990Result {
+  candidates: number;
+  refreshed: number;
+  failed: number;
+  funders: string[];
+}
+
+/**
+ * Refresh the stalest slice of funder 990 overviews. Safe to call on every
+ * cron tick — it does nothing at all once every funder is current.
+ *
+ * Errors are per-funder and already persisted by run990Overview (the row
+ * keeps its `error` column), so one funder ProPublica can't resolve never
+ * stops the rest of the slice.
+ */
+export async function refreshStale990Overviews(
+  env: GrantWorkerEnv,
+  opts: { maxAgeDays?: number; limit?: number; now?: Date } = {},
+): Promise<Refresh990Result> {
+  await ensureGrantWorkerSchema(env.DB);
+  const now = opts.now ?? new Date();
+  const maxAgeDays = opts.maxAgeDays ?? DEFAULT_990_MAX_AGE_DAYS;
+  const limit = opts.limit ?? DEFAULT_990_REFRESH_LIMIT;
+  const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+
+  // Never-fetched first (the empty-table case this exists to fix), then
+  // oldest. LEFT JOIN so a funder with no overview row at all is a
+  // candidate rather than being filtered out by the join.
+  const rows = await env.DB.prepare(
+    `SELECT f.funder_name AS funder_name, ov.fetched_at AS fetched_at
+       FROM (SELECT DISTINCT funder_name FROM grant_opportunities
+              WHERE funder_type IN ('foundation','corporate')) f
+       LEFT JOIN grant_funder_990_overview ov ON ov.funder_name = f.funder_name
+      WHERE ov.fetched_at IS NULL OR ov.fetched_at < ?
+      ORDER BY (ov.fetched_at IS NULL) DESC, ov.fetched_at ASC, f.funder_name ASC
+      LIMIT ?`
+  ).bind(cutoff, limit).all<{ funder_name: string; fetched_at: string | null }>()
+    .catch(() => ({ results: [] as { funder_name: string; fetched_at: string | null }[] }));
+
+  const candidates = rows.results ?? [];
+  const out: Refresh990Result = { candidates: candidates.length, refreshed: 0, failed: 0, funders: [] };
+  for (const row of candidates) {
+    out.funders.push(row.funder_name);
+    const result = await run990Overview(env, row.funder_name);
+    if ('error' in result) out.failed++; else out.refreshed++;
+  }
+  return out;
+}
+
+// Every distinct foundation/corporate funder already on file, regardless of
+// staleness — the manual full sweep behind POST /internal/990-all. The cron
+// path is refreshStale990Overviews above; this one exists for a deliberate
+// "re-pull everything now."
+//
+// Runs sequentially (ProPublica has no documented bulk endpoint) so one
 // slow/failing lookup doesn't race another's write to the same PK row.
 export async function run990OverviewForAllFunders(
   env: GrantWorkerEnv,

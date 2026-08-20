@@ -6,12 +6,14 @@
 // standalone worker) — elle-worker now only reasons over this data via a
 // direct D1 binding; it neither ingests nor maintains it.
 //
-// Two free, keyless federal sources, narrowed to the funders/topics
-// corpus/business/grant-strategy-map.md (elle-worker's corpus) names — this
-// is NOT a full-catalog pull:
-//   - Grants.gov search2 API  — VA, HHS/SAMHSA, NSF; veteran/recovery/AI terms
-//   - SBIR.gov public solicitations API — NSF, open only (map doc names NSF
-//     SBIR's AI/HCI track specifically)
+// Two free, keyless federal sources. This is NOT a full-catalog pull, but it
+// is no longer pinned to one operator's own strategy document either — the
+// public search on the marketing page is only as good as what lands here:
+//   - Grants.gov search2 API — a topic-driven query set spanning veterans,
+//     mental health, substance use, rural health, workforce, housing,
+//     community development, AI, and small-business innovation, plus three
+//     agency-pinned slices (VA, HHS/SAMHSA, NSF). See GRANTS_GOV_QUERIES.
+//   - SBIR.gov public solicitations API — every agency, open only.
 //
 // Neither source (nor SEED_OPPORTUNITIES below) covers the private
 // foundations/accelerators the map doc also names (Bob Woodruff, Arch
@@ -95,13 +97,43 @@ export const SEED_OPPORTUNITIES: SeedOpportunity[] = [
 
 // ── Grants.gov search2 ──────────────────────────────────────────────────
 // Public POST endpoint, no key: https://www.grants.gov/api (search2).
-// One query per named agency/topic slice rather than one broad pull, so a
-// single slow/failing query doesn't take the others down with it.
+// One query per slice rather than one broad pull, so a single slow/failing
+// query doesn't take the others down with it.
+//
+// This set used to be three agency-pinned queries drawn from one operator's
+// own strategy document. That made the public search only as good as that
+// document: a visitor outside those three agencies' subject areas got a
+// short list and no way to tell whether that meant "few matches" or "few
+// records." The set below is topic-driven and mostly agency-agnostic, so
+// coverage follows the subject space the product actually serves.
+//
+// `agencies: null` means no agency filter — the keyword sweeps every
+// federal agency posting to Grants.gov. The three original agency-pinned
+// queries are kept alongside, because an agency filter surfaces listings
+// whose titles don't contain the topic words at all.
+//
+// Bounded on purpose: one subrequest per entry, and Workers cap outbound
+// subrequests per invocation. Adding a topic here is cheap; adding fifty
+// is not. Overlap between entries is expected and handled — the same
+// opportunity returned by three queries dedupes to one row before any
+// write (see runGrantIngest).
 const GRANTS_GOV_URL = 'https://api.grants.gov/v1/api/search2';
-const GRANTS_GOV_QUERIES: Array<{ agencies: string; keyword: string }> = [
+const GRANTS_GOV_ROWS_PER_QUERY = 25;
+export const GRANTS_GOV_QUERIES: Array<{ agencies: string | null; keyword: string }> = [
+  // Agency-pinned — the original three, kept for the reason above.
   { agencies: 'VA', keyword: 'veteran suicide prevention' },
   { agencies: 'HHS-SAMHSA', keyword: 'recovery support substance use' },
   { agencies: 'NSF', keyword: 'artificial intelligence human-computer interaction' },
+  // Topic sweeps across every agency.
+  { agencies: null, keyword: 'veterans military families' },
+  { agencies: null, keyword: 'mental health crisis services' },
+  { agencies: null, keyword: 'substance use disorder treatment' },
+  { agencies: null, keyword: 'rural health access' },
+  { agencies: null, keyword: 'workforce development training' },
+  { agencies: null, keyword: 'affordable housing homelessness' },
+  { agencies: null, keyword: 'community development capacity building' },
+  { agencies: null, keyword: 'artificial intelligence research' },
+  { agencies: null, keyword: 'small business innovation technology' },
 ];
 
 interface GrantsGovHit {
@@ -139,13 +171,23 @@ export async function fetchGrantsGovOpportunities(): Promise<{ opportunities: No
   const opportunities: NormalizedLiveOpportunity[] = [];
   const errors: string[] = [];
   for (const q of GRANTS_GOV_QUERIES) {
+    // Names the slice in any error: agency-pinned slices by agency, topic
+    // sweeps by keyword. "grants.gov null" would tell an operator nothing.
+    const label = `grants.gov ${q.agencies ?? `[${q.keyword}]`}`;
     try {
       const res = await fetch(GRANTS_GOV_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'user-agent': USER_AGENT },
-        body: JSON.stringify({ keyword: q.keyword, agencies: q.agencies, oppStatuses: 'posted', rows: 25, startRecordNum: 0 }),
+        // The agencies field is omitted entirely (not sent as null) when the
+        // slice is agency-agnostic — search2 treats a present-but-empty
+        // filter differently from an absent one.
+        body: JSON.stringify({
+          keyword: q.keyword,
+          ...(q.agencies ? { agencies: q.agencies } : {}),
+          oppStatuses: 'posted', rows: GRANTS_GOV_ROWS_PER_QUERY, startRecordNum: 0,
+        }),
       });
-      if (!res.ok) { errors.push(`grants.gov ${q.agencies}: HTTP ${res.status}`); continue; }
+      if (!res.ok) { errors.push(`${label}: HTTP ${res.status}`); continue; }
       const data = (await res.json().catch(() => null)) as { data?: { oppHits?: GrantsGovHit[] } } | null;
       // An envelope we don't recognize is an ERROR, not zero results. These
       // shapes come from public documentation, not a verified live response
@@ -155,12 +197,12 @@ export async function fetchGrantsGovOpportunities(): Promise<{ opportunities: No
       // oppHits is empty (or omits the key) is still a real, clean zero and
       // does close stale rows — that distinction is the whole point.
       if (!data || typeof data.data !== 'object' || data.data === null) {
-        errors.push(`grants.gov ${q.agencies}: unrecognized response envelope (no "data" object)`);
+        errors.push(`${label}: unrecognized response envelope (no "data" object)`);
         continue;
       }
       const rawHits = data.data.oppHits;
       if (rawHits != null && !Array.isArray(rawHits)) {
-        errors.push(`grants.gov ${q.agencies}: unrecognized response envelope ("data.oppHits" is not an array)`);
+        errors.push(`${label}: unrecognized response envelope ("data.oppHits" is not an array)`);
         continue;
       }
       const hits = rawHits ?? [];
@@ -169,18 +211,23 @@ export async function fetchGrantsGovOpportunities(): Promise<{ opportunities: No
         if (norm) opportunities.push(norm);
       }
     } catch (e) {
-      errors.push(`grants.gov ${q.agencies}: ${(e as Error).message}`);
+      errors.push(`${label}: ${(e as Error).message}`);
     }
   }
   return { opportunities, errors };
 }
 
 // ── SBIR.gov public solicitations ───────────────────────────────────────
-// Public GET endpoint, no key. Narrowed to NSF, open solicitations only —
-// the map doc names NSF SBIR's AI/HCI track specifically, and a paused
-// federal SBIR program (see the seed's own "Paused — reauthorization
-// pending" row) should read as absent from an "open" filter, not an error.
-const SBIR_URL = 'https://api.www.sbir.gov/public/api/solicitations?agency=NSF&open=1';
+// Public GET endpoint, no key. Open solicitations only — a paused federal
+// SBIR program (see the seed's own "Paused — reauthorization pending" row)
+// should read as absent from an "open" filter, not as an error.
+//
+// The agency filter is gone. This was pinned to NSF because one strategy
+// document named NSF SBIR's AI/HCI track; but SBIR/STTR is eleven agencies,
+// every one of them non-dilutive money a small company can actually reach,
+// and pinning to one of them hid the other ten from every visitor on the
+// business track. Still one subrequest either way.
+const SBIR_URL = 'https://api.www.sbir.gov/public/api/solicitations?open=1';
 
 interface SbirSolicitation {
   solicitation_number?: string;
@@ -199,7 +246,10 @@ export function normalizeSbirSolicitation(s: SbirSolicitation): NormalizedLiveOp
   return {
     id: `sbir-gov-${number}`,
     source: 'sbir.gov',
-    funder_name: str(s.agency) ?? 'National Science Foundation',
+    // Was 'National Science Foundation' — safe while the query itself was
+    // pinned to NSF, a fabrication now that it isn't. A solicitation with no
+    // agency field names no funder, and says so.
+    funder_name: str(s.agency) ?? 'Unknown SBIR/STTR agency',
     funder_type: 'federal',
     program_name: title,
     amount_min: null,
@@ -258,7 +308,8 @@ export async function seedOpportunities(env: GrantWorkerEnv): Promise<{ inserted
 
 // ── Orchestration: ingest + maintain ────────────────────────────────────
 export interface GrantIngestResult {
-  fetched: number;
+  fetched: number;      // distinct opportunities after dedup — what was written
+  fetched_raw: number;  // hits before dedup; fetched_raw >> fetched means the query set overlaps heavily
   inserted: number;
   updated: number;
   closed: number;
@@ -272,10 +323,18 @@ export async function runGrantIngest(env: GrantWorkerEnv): Promise<GrantIngestRe
   const opportunities = [...grantsGov.opportunities, ...sbir.opportunities];
   const errors = [...grantsGov.errors, ...sbir.errors];
 
+  // Dedupe by stable id before touching D1. The topic query set overlaps by
+  // design (a rural veterans' mental-health grant answers three of them), so
+  // without this the same opportunity is written once per query that found
+  // it, and every duplicate after the first reports as an "update" — turning
+  // the run summary into fiction and doing N times the D1 writes.
+  const uniqueById = new Map<string, NormalizedLiveOpportunity>();
+  for (const o of opportunities) if (!uniqueById.has(o.id)) uniqueById.set(o.id, o);
+
   let inserted = 0;
   let updated = 0;
   const seenIds = new Set<string>();
-  for (const o of opportunities) {
+  for (const o of uniqueById.values()) {
     seenIds.add(o.id);
     const existing = await env.DB.prepare(`SELECT id FROM grant_opportunities WHERE id = ?`).bind(o.id).first();
     // necaif_applicable is always 0 here — both sources are exclusively
@@ -318,5 +377,5 @@ export async function runGrantIngest(env: GrantWorkerEnv): Promise<GrantIngestRe
     }
   }
 
-  return { fetched: opportunities.length, inserted, updated, closed, errors };
+  return { fetched: uniqueById.size, fetched_raw: opportunities.length, inserted, updated, closed, errors };
 }

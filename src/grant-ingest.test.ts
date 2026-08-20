@@ -5,7 +5,12 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   fetchGrantsGovOpportunities, fetchSbirOpportunities, normalizeGrantsGovHit,
   normalizeSbirSolicitation, runGrantIngest, seedOpportunities, SEED_OPPORTUNITIES,
+  GRANTS_GOV_QUERIES,
 } from './grant-ingest';
+
+// Derived, never hardcoded: adding a topic to GRANTS_GOV_QUERIES should
+// broaden coverage without editing a magic number in four assertions.
+const QUERY_COUNT = GRANTS_GOV_QUERIES.length;
 
 function stubFetch(routes: Array<{ match: string; ok?: boolean; status?: number; json?: unknown }>) {
   const fn = vi.fn(async (url: string) => {
@@ -81,12 +86,37 @@ describe('normalizeSbirSolicitation', () => {
 });
 
 describe('fetchGrantsGovOpportunities', () => {
-  it('fans out across all three named agency/keyword queries and aggregates hits', async () => {
+  it('fans out across every configured query and aggregates hits', async () => {
     const fn = stubFetch([{ match: 'search2', json: { data: { oppHits: [{ number: 'A-1', title: 'A' }] } } }]);
     const { opportunities, errors } = await fetchGrantsGovOpportunities();
-    expect(fn).toHaveBeenCalledTimes(3);
-    expect(opportunities).toHaveLength(3);
+    expect(fn).toHaveBeenCalledTimes(QUERY_COUNT);
+    expect(opportunities).toHaveLength(QUERY_COUNT);
     expect(errors).toHaveLength(0);
+  });
+
+  it('sends an agencies filter only for the agency-pinned slices', async () => {
+    const bodies: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      bodies.push(String(init.body));
+      return { ok: true, status: 200, json: async () => ({ data: { oppHits: [] } }) } as unknown as Response;
+    }));
+    await fetchGrantsGovOpportunities();
+    const pinned = GRANTS_GOV_QUERIES.filter((q) => q.agencies).length;
+    // An agency-agnostic slice must omit the key entirely rather than send
+    // null — search2 treats present-but-empty differently from absent.
+    expect(bodies.filter((b) => b.includes('"agencies"'))).toHaveLength(pinned);
+    expect(bodies.some((b) => b.includes('"agencies":null'))).toBe(false);
+    expect(bodies).toHaveLength(QUERY_COUNT);
+  });
+
+  it('names each slice in its errors — by agency when pinned, by keyword when not', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) } as unknown as Response)));
+    const { errors } = await fetchGrantsGovOpportunities();
+    expect(errors).toHaveLength(QUERY_COUNT);
+    expect(errors.some((e) => /grants\.gov VA:/.test(e))).toBe(true);
+    // The topic sweeps have no agency, so they must not stringify as "null".
+    expect(errors.some((e) => /grants\.gov null/.test(e))).toBe(false);
+    expect(errors.some((e) => /grants\.gov \[.+\]:/.test(e))).toBe(true);
   });
 
   it('collects a per-query error without losing the other queries\' results', async () => {
@@ -97,7 +127,7 @@ describe('fetchGrantsGovOpportunities', () => {
       return { ok: true, status: 200, json: async () => ({ data: { oppHits: [{ number: `Q-${call}`, title: 'X' }] } }) } as unknown as Response;
     }));
     const { opportunities, errors } = await fetchGrantsGovOpportunities();
-    expect(opportunities).toHaveLength(2);
+    expect(opportunities).toHaveLength(QUERY_COUNT - 1);
     expect(errors).toEqual([expect.stringMatching(/HHS-SAMHSA.*HTTP 503/)]);
   });
 
@@ -105,7 +135,7 @@ describe('fetchGrantsGovOpportunities', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNRESET'); }));
     const { opportunities, errors } = await fetchGrantsGovOpportunities();
     expect(opportunities).toHaveLength(0);
-    expect(errors).toHaveLength(3);
+    expect(errors).toHaveLength(QUERY_COUNT);
   });
 });
 
@@ -207,10 +237,27 @@ describe('runGrantIngest · orchestration', () => {
     ]);
     const env = fakeD1Env();
     const result = await runGrantIngest(env);
-    expect(result.fetched).toBe(4);
+    // Every grants.gov slice returns the SAME hit here, which is exactly the
+    // overlap the real topic query set produces. fetched_raw counts the hits;
+    // fetched counts what survives dedup and is what actually gets written.
+    expect(result.fetched_raw).toBe(QUERY_COUNT + 1);
+    expect(result.fetched).toBe(2);
     expect(result.inserted).toBe(2);
-    expect(result.updated).toBe(2);
+    expect(result.updated).toBe(0);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it('writes a duplicated opportunity once, not once per query that found it', async () => {
+    stubFetch([
+      { match: 'search2', json: { data: { oppHits: [{ number: 'DUP-1', title: 'Found by every topic' }] } } },
+      { match: 'solicitations', json: [] },
+    ]);
+    const env = fakeD1Env();
+    const result = await runGrantIngest(env);
+    expect(result.fetched_raw).toBe(QUERY_COUNT);
+    expect(result.inserted).toBe(1);
+    expect(result.updated).toBe(0);
+    expect([...env._rows.keys()]).toEqual(['grants-gov-DUP-1']);
   });
 
   it('closes a previously-open row that no longer appears in a cleanly-fetched source', async () => {
